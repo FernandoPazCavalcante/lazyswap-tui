@@ -1,0 +1,38 @@
+name: release
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write       # create tags + releases
+  issues: write         # semantic-release comments
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # semantic-release needs full history + tags
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # ponytail: builds run on every master push; semantic-release no-ops when
+      # there are no releasable commits, so the cross-compiles are wasted then.
+      # Gate behind a dry-run if CI minutes ever matter.
+      - name: Build release artifacts
+        run: ./scripts/build-release.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx --yes semantic-release@24

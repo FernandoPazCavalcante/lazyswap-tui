@@ -1,0 +1,16 @@
+{
+  "branches": [{ "name": "master", "prerelease": "beta" }],
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          { "path": "dist/lazyswap-*.tar.gz" },
+          { "path": "dist/lazyswap-*.tar.gz.sha256" }
+        ]
+      }
+    ]
+  ]
+}

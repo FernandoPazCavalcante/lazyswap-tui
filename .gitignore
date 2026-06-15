@@ -1,6 +1,9 @@
 # Compiled binary
 /lazyswap-tui
 
+# Release artifacts (scripts/build-release.sh)
+/dist/
+
 # Go build artifacts
 *.exe
 *.exe~
