@@ -1,40 +1,66 @@
 # lazyswap
 
-A Vim-style terminal wallet that swaps crypto **directly on-chain**, from your
-machine. No exchange account, no deposits, no custodian. You hold the keys; the
-trade goes straight to a DEX.
+[![release](https://github.com/FernandoPazCavalcante/lazyswap/actions/workflows/release.yml/badge.svg)](https://github.com/FernandoPazCavalcante/lazyswap/actions/workflows/release.yml)
+[![Go](https://img.shields.io/github/go-mod/go-version/FernandoPazCavalcante/lazyswap)](go.mod)
+[![License: MIT](https://img.shields.io/github/license/FernandoPazCavalcante/lazyswap)](LICENSE)
 
-Go rewrite of the original Bun/TS TUI. Runs on EVM chains (Ethereum, BSC) for
-on-chain DEX swaps (Uniswap V2 / PancakeSwap), plus cross-chain BTC swaps via
-THORchain.
+A Vim-style terminal wallet — a **TUI and a CLI** — that swaps crypto
+**directly on-chain**, from your machine. Drive it interactively or script it
+from the command line. No exchange account, no deposits, no custodian. You hold
+the keys; the trade goes straight to a DEX.
 
-## Build & install
+Runs on EVM chains (Ethereum, BSC) for on-chain DEX swaps (Uniswap V2 /
+PancakeSwap), plus cross-chain BTC swaps via THORchain.
+
+## Highlights
+
+- **Cross-chain BTC swaps.** Swap native Bitcoin ↔ EVM tokens from a single
+  terminal wallet, routed through THORchain — no bridge, no wrapped BTC.
+- **Self-custody, no exchange.** You hold the keys; trades go straight to a DEX.
+  No account, no KYC, no deposits, no withdrawal queue.
+- **Encrypted on disk.** Your private key is sealed with AES-256-GCM under a
+  PBKDF2-derived key (100k iterations) and never stored or logged in plaintext.
+- **Vim-style TUI + scriptable CLI.** A fast, keyboard-driven terminal UI, plus
+  a non-interactive CLI for one-shot swaps in scripts and pipelines.
+- **Multi-chain EVM.** Ethereum and BSC today, with chain config in one place —
+  RPC URLs, routers and token addresses are never hardcoded elsewhere.
+
+## Usage
+
+Launch the TUI, or drive everything from the command line.
+
+<!-- TODO: drop a TUI screenshot or GIF here — e.g. ![lazyswap TUI](docs/demo.gif) -->
+
+```bash
+lazyswap                          # launch the Vim-style TUI (first run creates a wallet)
+
+lazyswap swap 0.50 BNB USDT       # swap $0.50 worth of BNB into USDT
+lazyswap swap 5 BNB USDT --yes    # skip the y/N confirmation (handy in scripts)
+lazyswap wallets                  # list wallet addresses
+lazyswap config show              # print current chain / slippage / default wallet
+lazyswap help                     # full command reference
+```
+
+Set `LAZYSWAP_PASSWORD` to skip the interactive password prompt when scripting.
+
+## Installation
+
+```bash
+go install github.com/FernandoPazCavalcante/lazyswap@latest
+```
 
 Needs **Go 1.26+** (and a C toolchain — the SQLite driver is cgo-free, but
 go-ethereum pulls in cgo on some platforms).
 
-```bash
-# Install the binary to $GOBIN (or ~/go/bin) — no clone needed
-go install github.com/FernandoPazCavalcante/lazyswap-tui@latest
+> **Pre-release:** no stable version is tagged yet, so `@latest` tracks the
+> `v0.0.0` development tag. For the newest code, use `@master` or
+> [build from source](#build-from-source).
 
-# Or build from a clone
-git clone https://github.com/FernandoPazCavalcante/lazyswap-tui.git
-cd lazyswap-tui
-go build -o lazyswap-tui .   # produces ./lazyswap-tui
-```
-
-Then run it:
-
-```bash
-./lazyswap-tui      # from a build
-lazyswap-tui        # if installed and $GOBIN is on PATH
-go run .            # straight from source, no binary
-```
-
-Data lives in `~/.lazyswap/` (`wallets.db`, `lazyswap.log`). Override with
-`LAZYSWAP_DATA_DIR`. First launch creates a wallet; your private key is encrypted
-with AES-256-GCM under a PBKDF2-derived key (100k iterations) and never leaves
-the box in plaintext.
+Once installed, run `lazyswap` (if `$GOBIN` is on your `PATH`). Data lives in
+`~/.lazyswap/` (`wallets.db`, `lazyswap.log`); override with `LAZYSWAP_DATA_DIR`.
+First launch creates a wallet; your private key is encrypted with AES-256-GCM
+under a PBKDF2-derived key (100k iterations) and never leaves the box in
+plaintext.
 
 ## Why local beats a centralized exchange
 
@@ -99,6 +125,27 @@ Layers: **TUI → Services → DAO / Blockchain**. `internal/chain/config.go` is
 single source of truth for RPC URLs, router and token addresses — nothing
 chain-specific is hardcoded elsewhere. `internal/paths` owns filesystem
 locations; `internal/applog` writes to `lazyswap.log` (never stdout).
+
+## Build from source
+
+```bash
+git clone https://github.com/FernandoPazCavalcante/lazyswap.git
+cd lazyswap
+go build -o lazyswap .   # produces ./lazyswap
+go run .                 # or run straight from source, no binary
+go test ./...            # run the test suite
+```
+
+## Contributing
+
+Found a bug or want a feature? [Open an issue](https://github.com/FernandoPazCavalcante/lazyswap/issues).
+Pull requests are welcome — the project follows
+[Conventional Commits](https://www.conventionalcommits.org/) (semantic-release
+drives versioning off the commit history).
+
+## Author
+
+Built by **Fernando Paz Cavalcante** ([@FernandoPazCavalcante](https://github.com/FernandoPazCavalcante)).
 
 ## License
 
