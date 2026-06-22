@@ -27,6 +27,10 @@ Layers: **TUI → services → DAO / blockchain**. All packages live under `inte
 - `internal/chain` — `config.go` `CHAINS` map + contract ABIs; `DefaultKey = "bsc"`
 - `internal/dex`, `internal/swap`, `internal/thorchain` — quote/orchestrate/execute (EVM + BTC)
 - `internal/balance`, `internal/explorer` — balance fetch/format, explorer API
+- `internal/pass` — LazySwapPass (ERC-721) mint + validity/expiry reads, **on-chain only**
+  (no backend). Per-chain address in `chain.Config.PassAddress` (empty = feature inert;
+  deployed on `bsc_testnet` only — set `bsc`'s address after mainnet deploy). Surfaced as the
+  TUI "Lazyswap Pass" tab (6); one-click mint reuses the in-session decrypted key.
 - `internal/settings` — persisted chain/slippage/default-wallet, **shared by CLI and TUI**
 - `internal/paths` — filesystem SSOT; `internal/applog` — file logger
 - `internal/cli` — non-interactive commands; `internal/tui` — screens/panels/overlays/theme/keys

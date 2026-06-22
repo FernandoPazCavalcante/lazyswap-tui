@@ -13,15 +13,18 @@ type TokenInfo struct {
 
 // Config is the per-chain configuration.
 type Config struct {
-	ChainID           uint64
-	Name              string
-	RPCURL            string
-	RouterAddress     string
-	WrappedNative     string
-	NativeSymbol      string
-	NativeDecimals    uint8
-	ExplorerAPIURL    string
-	StablecoinAddr    string
+	ChainID        uint64
+	Name           string
+	RPCURL         string
+	RouterAddress  string
+	WrappedNative  string
+	NativeSymbol   string
+	NativeDecimals uint8
+	ExplorerAPIURL string
+	StablecoinAddr string
+	// PassAddress is the LazySwapPass (ERC-721) contract on this chain. Empty
+	// means the pass is not deployed there and the Buy Pass feature is inert.
+	PassAddress       string
 	Tokens            map[string]TokenInfo
 	RecommendedTokens []TokenInfo
 }
@@ -106,6 +109,7 @@ var CHAINS = map[string]Config{
 		NativeDecimals: 18,
 		ExplorerAPIURL: "https://api-testnet.bscscan.com/api",
 		StablecoinAddr: "0x337610d27c682E347C9cD60BD4b3b107C9d34dD1",
+		PassAddress:    "0x6a890237d707a1228ef39b44e44685919d22426e", // LazySwapPass (ERC-721)
 		Tokens: map[string]TokenInfo{
 			"USDC": {Address: "0x64544969ed7EBf5f083679233325356EbE738930", Decimals: 18, Symbol: "USDC"},
 			"WBNB": {Address: "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd", Decimals: 18, Symbol: "WBNB"},

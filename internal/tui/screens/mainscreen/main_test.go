@@ -9,6 +9,7 @@ import (
 	"github.com/FernandoPazCavalcante/lazyswap/internal/crypto"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/settings"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/tui/overlays/importoverlay"
+	passpanel "github.com/FernandoPazCavalcante/lazyswap/internal/tui/panels/lazyswappass"
 	settingspanel "github.com/FernandoPazCavalcante/lazyswap/internal/tui/panels/settings"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/wallet"
 )
@@ -27,7 +28,7 @@ func newModel(t *testing.T) Model {
 	c, _ := crypto.New(key)
 	svc := wallet.NewService(dao, c)
 
-	m := New(svc, nil, nil, dao, settings.Defaults()) // nil balance + swap services — RPC not exercised in unit tests
+	m := New(svc, nil, nil, nil, dao, settings.Defaults()) // nil balance/swap/pass services — RPC not exercised in unit tests
 	m.SetSize(120, 30)
 	return m
 }
@@ -185,5 +186,41 @@ func TestWalletQRModeEscCloses(t *testing.T) {
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if m.mode != modeNormal {
 		t.Fatalf("after esc mode = %v, want modeNormal", m.mode)
+	}
+}
+
+func TestPassTabRegistered(t *testing.T) {
+	m := newModel(t)
+	if !m.tabExists(int(tabPass)) {
+		t.Fatal("tabPass (6) should be an available tab")
+	}
+	var found bool
+	for _, tb := range m.availableTabs() {
+		if tb.Num == int(tabPass) && tb.Label == "Lazyswap Pass" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal(`availableTabs missing {6, "Lazyswap Pass"}`)
+	}
+}
+
+func TestNumberSixSwitchesToPassTab(t *testing.T) {
+	m := modelWithWallet(t)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	if m.activeTab != tabPass {
+		t.Fatalf("activeTab = %v, want tabPass", m.activeTab)
+	}
+	if m.focus != focusRight {
+		t.Fatalf("focus = %v, want focusRight", m.focus)
+	}
+}
+
+func TestBuyRequestWithoutServiceIsNoop(t *testing.T) {
+	// newModel wires a nil pass service; a buy request must be guarded, not panic.
+	m := modelWithWallet(t)
+	_, cmd := m.Update(passpanel.BuyRequestMsg{})
+	if cmd != nil {
+		t.Fatal("buy request with no pass service should issue no command")
 	}
 }

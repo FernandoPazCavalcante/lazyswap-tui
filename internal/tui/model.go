@@ -6,12 +6,15 @@
 package tui
 
 import (
+	"errors"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/FernandoPazCavalcante/lazyswap/internal/applog"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/balance"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/chain"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/crypto"
+	passpkg "github.com/FernandoPazCavalcante/lazyswap/internal/pass"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/settings"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/swap"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/tui/screens/login"
@@ -37,6 +40,7 @@ type Root struct {
 	svc      *crypto.Service
 	balSvc   *balance.Service
 	flowSvc  *swap.Flow
+	passSvc  *passpkg.Service
 
 	width, height int
 }
@@ -112,7 +116,18 @@ func (r Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		r.flowSvc = flowSvc
 
-		main := mainscreen.New(walletSvc, balSvc, flowSvc, r.dao, r.settings)
+		// Pass service is optional: ErrNoPass (chain without a deployment) is
+		// expected and leaves the Pass tab in its "not available" state.
+		passSvc, err := passpkg.New(r.chainKey)
+		if err != nil {
+			if !errors.Is(err, passpkg.ErrNoPass) {
+				applog.Error("pass.New", err)
+			}
+			passSvc = nil
+		}
+		r.passSvc = passSvc
+
+		main := mainscreen.New(walletSvc, balSvc, flowSvc, passSvc, r.dao, r.settings)
 		main.SetSize(r.width, r.height)
 		r.main = &main
 		r.screen = screenMain

@@ -17,10 +17,12 @@ import (
 	"github.com/FernandoPazCavalcante/lazyswap/internal/applog"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/balance"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/chain"
+	passpkg "github.com/FernandoPazCavalcante/lazyswap/internal/pass"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/settings"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/swap"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/tui/overlays/importoverlay"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/tui/overlays/swapoverlay"
+	passpanel "github.com/FernandoPazCavalcante/lazyswap/internal/tui/panels/lazyswappass"
 	"github.com/FernandoPazCavalcante/lazyswap/internal/tui/panels/rightpanel"
 	settingspanel "github.com/FernandoPazCavalcante/lazyswap/internal/tui/panels/settings"
 	swapbtcpanel "github.com/FernandoPazCavalcante/lazyswap/internal/tui/panels/swapbtc"
@@ -56,6 +58,7 @@ const (
 	tabTokens   tab = 1
 	tabSettings tab = 4
 	tabSwapBTC  tab = 5
+	tabPass     tab = 6
 )
 
 // Model owns the main-screen state machine.
@@ -64,11 +67,13 @@ type Model struct {
 	svc     *walletpkg.Service
 	balSvc  *balance.Service
 	flowSvc *swap.Flow
+	passSvc *passpkg.Service
 
 	panel    walletpanel.Model
 	tokens   tokenspanel.Model
 	settings settingspanel.Model
 	swapbtc  swapbtcpanel.Model
+	pass     passpanel.Model
 	imp      importoverlay.Model
 	swap     swapoverlay.Model
 
@@ -105,21 +110,25 @@ type Model struct {
 // remains usable (useful for tests). dao may be nil in tests (persistence is
 // then skipped). st seeds the chain, slippage, and default wallet from the
 // shared, persisted settings.
-func New(svc *walletpkg.Service, balSvc *balance.Service, flowSvc *swap.Flow, dao *walletpkg.DAO, st settings.Settings) Model {
+func New(svc *walletpkg.Service, balSvc *balance.Service, flowSvc *swap.Flow, passSvc *passpkg.Service, dao *walletpkg.DAO, st settings.Settings) Model {
 	chainKey := st.ChainKey
 	if chainKey == "" {
 		chainKey = chain.DefaultKey
 	}
 	c := chain.Get(chainKey)
+	passPanel := passpanel.New()
+	passPanel.SetAvailable(c.PassAddress != "", c.NativeSymbol)
 	return Model{
 		dao:           dao,
 		svc:           svc,
 		balSvc:        balSvc,
 		flowSvc:       flowSvc,
+		passSvc:       passSvc,
 		panel:         walletpanel.New(),
 		tokens:        tokenspanel.New(),
 		settings:      settingspanel.New(st.Slippage, chainKey, c.Name),
 		swapbtc:       swapbtcpanel.New(),
+		pass:          passPanel,
 		imp:           importoverlay.New(),
 		focus:         focusLeft,
 		activeTab:     tabTokens,
@@ -197,6 +206,7 @@ func (m *Model) SetSize(w, h int) {
 	m.tokens.SetSize(rightW, rightH)
 	m.settings.SetSize(rightW, rightH)
 	m.swapbtc.SetSize(rightW, rightH)
+	m.pass.SetSize(rightW, rightH)
 	m.imp.SetSize(w, h)
 	if m.mode == modeSwap {
 		m.swap.SetSize(w, h)
@@ -210,6 +220,7 @@ func (m *Model) applyFocusStyles() {
 	m.tokens.SetFocused(rightFocused && m.activeTab == tabTokens)
 	m.settings.SetFocused(rightFocused && m.activeTab == tabSettings)
 	m.swapbtc.SetFocused(rightFocused && m.activeTab == tabSwapBTC)
+	m.pass.SetFocused(rightFocused && m.activeTab == tabPass)
 }
 
 // ─── Messages ────────────────────────────────────────────────────────────────
@@ -237,6 +248,14 @@ type swapQuoteMsg struct {
 	err   error
 }
 type swapExecMsg struct{ result swap.FlowResult }
+type passStatusMsg struct {
+	status passpkg.Status
+	err    error
+}
+type passBoughtMsg struct {
+	txHash string
+	err    error
+}
 
 func refreshWalletsCmd(svc *walletpkg.Service) tea.Cmd {
 	return func() tea.Msg {
@@ -282,6 +301,20 @@ func executeSwapCmd(f *swap.Flow, privateKey string, from, to swap.TokenInfo, us
 		defer cancel()
 		res := f.Execute(ctx, privateKey, from, to, usd, slippage)
 		return swapExecMsg{result: res}
+	}
+}
+
+// mintPassCmd mints a LazySwap Pass from the wallet (one-click; the private key
+// is already decrypted in-session), blocking until the tx is mined.
+func mintPassCmd(svc *passpkg.Service, privateKey string) tea.Cmd {
+	return func() tea.Msg {
+		if svc == nil {
+			return passBoughtMsg{err: fmt.Errorf("pass service not configured")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		tx, err := svc.Buy(ctx, privateKey)
+		return passBoughtMsg{txHash: tx, err: err}
 	}
 }
 
@@ -342,6 +375,7 @@ type chainSwitchedMsg struct {
 	chainKey string
 	balSvc   *balance.Service
 	flowSvc  *swap.Flow
+	passSvc  *passpkg.Service
 	err      error
 }
 
@@ -359,7 +393,10 @@ func switchChainCmd(chainKey string) tea.Cmd {
 			balSvc.Close()
 			return chainSwitchedMsg{chainKey: chainKey, err: err}
 		}
-		return chainSwitchedMsg{chainKey: chainKey, balSvc: balSvc, flowSvc: flowSvc}
+		// Pass is optional per chain: a nil service (no deployment) just makes
+		// the Pass tab show "not available" — never blocks the switch.
+		passSvc, _ := passpkg.New(chainKey)
+		return chainSwitchedMsg{chainKey: chainKey, balSvc: balSvc, flowSvc: flowSvc, passSvc: passSvc}
 	}
 }
 
@@ -471,6 +508,32 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.swap, _ = m.swap.Update(swapoverlay.ExecutionResultMsg{Result: msg.result})
 		return m, nil
 
+	case passpanel.BuyRequestMsg:
+		if m.current == nil || m.passSvc == nil {
+			return m, nil
+		}
+		applog.Tracef("mainscreen — minting pass for %s", m.current.Address)
+		m.pass.SetBuying(true)
+		return m, mintPassCmd(m.passSvc, m.current.PrivateKey)
+
+	case passBoughtMsg:
+		if msg.err != nil {
+			applog.Error("pass mint", msg.err)
+			m.pass.SetError(msg.err.Error())
+			return m, nil
+		}
+		applog.Infof("pass minted tx=%s", msg.txHash)
+		// Re-read status so the panel flips to "active" with the new expiry.
+		return m, m.refreshPassCmd()
+
+	case passStatusMsg:
+		if msg.err != nil {
+			m.pass.SetError(msg.err.Error())
+			return m, nil
+		}
+		m.pass.SetStatus(msg.status)
+		return m, nil
+
 	case swapbtcpanel.EstimateRequestMsg:
 		if m.current == nil {
 			return m, nil
@@ -522,6 +585,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			c := chain.Get(msg.ChainKey)
 			m.chainKey = msg.ChainKey
 			m.settings.SetNetwork(msg.ChainKey, c.Name)
+			m.pass.SetAvailable(c.PassAddress != "", c.NativeSymbol)
 			m.persistChain(msg.ChainKey)
 			return m, nil
 		}
@@ -538,22 +602,27 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if m.flowSvc != nil {
 			m.flowSvc.Close()
 		}
+		if m.passSvc != nil {
+			m.passSvc.Close()
+		}
 		m.chainKey = msg.chainKey
 		m.balSvc = msg.balSvc
 		m.flowSvc = msg.flowSvc
+		m.passSvc = msg.passSvc
 		c := chain.Get(msg.chainKey)
 		m.settings.SetNetwork(msg.chainKey, c.Name)
+		m.pass.SetAvailable(c.PassAddress != "", c.NativeSymbol)
 		m.persistChain(msg.chainKey)
 		m.balanceCache = make(map[string][]balance.TokenBalance)
 		m.errMsg = ""
-		return m, m.balancesCmdForCurrent()
+		return m, tea.Batch(m.balancesCmdForCurrent(), m.refreshPassCmd())
 
 	case walletpanel.SelectionChangedMsg:
 		m.current = msg.Wallet
 		if msg.Wallet != nil {
 			m.persistDefaultWallet(msg.Wallet.Address)
 		}
-		return m, m.balancesCmdForCurrent()
+		return m, tea.Batch(m.balancesCmdForCurrent(), m.refreshPassCmd())
 	}
 
 	// Mode-specific dispatch.
@@ -700,6 +769,10 @@ func (m Model) routeToActiveTab(msg tea.Msg) (Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.swapbtc, cmd = m.swapbtc.Update(msg)
 		return m, cmd
+	case tabPass:
+		var cmd tea.Cmd
+		m.pass, cmd = m.pass.Update(msg)
+		return m, cmd
 	default:
 		var cmd tea.Cmd
 		m.tokens, cmd = m.tokens.Update(msg)
@@ -727,6 +800,22 @@ func (m *Model) balancesCmdForCurrent() tea.Cmd {
 	return fetchBalancesCmd(m.balSvc, addr)
 }
 
+// refreshPassCmd fetches the current wallet's pass status off the UI thread.
+// Returns nil when no pass service (chain without a pass) or no wallet.
+func (m *Model) refreshPassCmd() tea.Cmd {
+	if m.passSvc == nil || m.current == nil {
+		return nil
+	}
+	svc := m.passSvc
+	addr := m.current.Address
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		st, err := svc.Status(ctx, addr)
+		return passStatusMsg{status: st, err: err}
+	}
+}
+
 func (m Model) chainName() string {
 	if m.balSvc == nil {
 		return chain.Get(chain.DefaultKey).Name
@@ -744,6 +833,7 @@ func (m Model) availableTabs() []rightpanel.Tab {
 		{Num: int(tabTokens), Label: "Tokens"},
 		{Num: int(tabSettings), Label: "Settings"},
 		{Num: int(tabSwapBTC), Label: "Swap BTC"},
+		{Num: int(tabPass), Label: "Lazyswap Pass"},
 	}
 }
 
@@ -784,6 +874,8 @@ func (m Model) activeTabView() string {
 		return m.settings.View()
 	case tabSwapBTC:
 		return m.swapbtc.View()
+	case tabPass:
+		return m.pass.View()
 	default:
 		return m.tokens.View()
 	}
@@ -803,6 +895,8 @@ func (m *Model) onTabActivated() tea.Cmd {
 			}
 		}
 		return m.balancesCmdForCurrent()
+	case tabPass:
+		return m.refreshPassCmd()
 	default:
 		return nil
 	}
@@ -918,7 +1012,11 @@ func (m Model) renderStatusBar() string {
 		case focusLeft:
 			hint = fmt.Sprintf("Tab: focus  |  c/d/i  y:copy  |  j/k  |  ^C  |  API:%s", api)
 		case focusRight:
-			hint = fmt.Sprintf("Tab: focus  |  s:swap  r:refresh  y:copy  |  j/k  |  ^C  |  API:%s", api)
+			if m.activeTab == tabPass {
+				hint = "Tab: focus  |  enter: buy pass  |  ^C"
+			} else {
+				hint = fmt.Sprintf("Tab: focus  |  s:swap  r:refresh  y:copy  |  j/k  |  ^C  |  API:%s", api)
+			}
 		}
 	}
 
