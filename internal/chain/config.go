@@ -121,12 +121,33 @@ var CHAINS = map[string]Config{
 			{Address: "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd", Decimals: 18, Symbol: "WBNB"},
 		},
 	},
+
+	"sepolia": {
+		ChainID:        11155111,
+		Name:           "Ethereum Sepolia",
+		RPCURL:         "https://ethereum-sepolia-rpc.publicnode.com",
+		RouterAddress:  "0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3", // Uniswap V2 Router02
+		WrappedNative:  "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14", // WETH (router.WETH())
+		NativeSymbol:   "ETH",
+		NativeDecimals: 18,
+		ExplorerAPIURL: "https://api-sepolia.etherscan.io/api",
+		StablecoinAddr: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", // Circle USDC
+		// PassAddress empty: LazySwapPass not deployed on Sepolia.
+		Tokens: map[string]TokenInfo{
+			"USDC": {Address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", Decimals: 6, Symbol: "USDC"},
+			"WETH": {Address: "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14", Decimals: 18, Symbol: "WETH"},
+		},
+		RecommendedTokens: []TokenInfo{
+			{Address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", Decimals: 6, Symbol: "USDC"},
+			{Address: "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14", Decimals: 18, Symbol: "WETH"},
+		},
+	},
 }
 
 // OrderedKeys lists the chain keys in a stable display order. Go maps iterate
 // randomly, so the network-switch cycle relies on this slice instead of ranging
 // over CHAINS. Mirrors Object.keys(CHAINS) order in the Bun reference.
-var OrderedKeys = []string{"ethereum", "bsc", "bsc_testnet"}
+var OrderedKeys = []string{"ethereum", "bsc", "bsc_testnet", "sepolia"}
 
 // Get returns the config for the given key, falling back to DefaultKey.
 func Get(key string) Config {
