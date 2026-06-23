@@ -501,11 +501,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case swapExecMsg:
 		applog.Infof("swap result success=%v tx=%s err=%s", msg.result.Success, msg.result.TxHash, msg.result.Err)
-		// Invalidate cached balances for the active wallet so the next view shows the new state.
-		if m.current != nil {
-			delete(m.balanceCache, m.current.Address)
-		}
 		m.swap, _ = m.swap.Update(swapoverlay.ExecutionResultMsg{Result: msg.result})
+		// On success, drop the stale cache AND refetch so the swapped-in token
+		// shows up without the user pressing 'r'.
+		if msg.result.Success && m.current != nil {
+			delete(m.balanceCache, m.current.Address)
+			return m, m.balancesCmdForCurrent()
+		}
 		return m, nil
 
 	case passpanel.BuyRequestMsg:
@@ -561,6 +563,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.swapbtc, cmd = m.swapbtc.Update(msg)
 		if r, ok := msg.(swapbtcpanel.ExecutionResultMsg); ok && r.Result.Success && m.current != nil {
 			delete(m.balanceCache, m.current.Address)
+			return m, tea.Batch(cmd, m.balancesCmdForCurrent())
 		}
 		return m, cmd
 
