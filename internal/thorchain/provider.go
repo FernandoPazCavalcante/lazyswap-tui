@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,7 +17,7 @@ import (
 	"github.com/FernandoPazCavalcante/lazyswap/internal/applog"
 )
 
-// SwapQuote is the cross-chain quote returned by the Midgard API.
+// SwapQuote is the cross-chain quote returned by the THORnode quote API.
 type SwapQuote struct {
 	ExpectedOutput   string // expected BTC output, e.g. "0.00123456"
 	ExpectedSats     int64  // expected BTC output in sats (1e8 base units)
@@ -25,6 +26,16 @@ type SwapQuote struct {
 	EstimatedSeconds int    // estimated settlement time
 	GasLimit         string // recommended EVM gas limit
 	Memo             string // memo to embed in the EVM transaction (empty for estimate-only)
+	RecommendedMinIn int64  // THORChain's recommended minimum input, in 1e8 base units (0 if unknown)
+}
+
+// BelowMinError is returned when the swap amount is under THORChain's
+// recommended minimum for the inbound asset (it would likely fail or be
+// unrefundable). MinIn is that minimum in 1e8 base units.
+type BelowMinError struct{ MinIn int64 }
+
+func (e *BelowMinError) Error() string {
+	return fmt.Sprintf("amount below THORChain minimum (%d base units)", e.MinIn)
 }
 
 // InboundAddress is the active vault for a chain, from THORnode.
@@ -34,35 +45,35 @@ type InboundAddress struct {
 	Router       string
 }
 
-// Provider talks to the public Midgard + THORnode APIs. The base URLs are
-// fields so tests can point them at an httptest server.
+// Provider talks to the public THORnode API. The base URL is a field so tests
+// can point it at an httptest server.
 type Provider struct {
-	MidgardURL string
-	NodeURL    string
-	client     *http.Client
+	NodeURL string
+	client  *http.Client
 }
 
-// NewProvider returns a Provider wired to the public endpoints.
+// NewProvider returns a Provider wired to the public endpoint.
 func NewProvider() *Provider {
 	return &Provider{
-		MidgardURL: MidgardURL,
-		NodeURL:    NodeURL,
-		client:     &http.Client{Timeout: 20 * time.Second},
+		NodeURL: NodeURL,
+		client:  &http.Client{Timeout: 20 * time.Second},
 	}
 }
 
 // ─── Raw API shapes ────────────────────────────────────────────────────────────
 
-type midgardQuoteResponse struct {
+type quoteResponse struct {
 	ExpectedAmountOut string `json:"expected_amount_out"`
 	Fees              struct {
 		Total string `json:"total"`
 		Asset string `json:"asset"`
 	} `json:"fees"`
-	OutboundDelaySeconds int    `json:"outbound_delay_seconds"`
-	Memo                 string `json:"memo"`
-	InboundAddress       string `json:"inbound_address"`
-	Error                string `json:"error"`
+	OutboundDelaySeconds   int    `json:"outbound_delay_seconds"`
+	Memo                   string `json:"memo"`
+	InboundAddress         string `json:"inbound_address"`
+	RecommendedMinAmountIn string `json:"recommended_min_amount_in"`
+	Error                  string `json:"error"`   // generic error field
+	Message                string `json:"message"` // THORnode error, e.g. "amount less than dust threshold"
 }
 
 type thorNodeInboundEntry struct {
@@ -74,7 +85,7 @@ type thorNodeInboundEntry struct {
 
 // ─── Quote ───────────────────────────────────────────────────────────────────
 
-// GetSwapQuote asks Midgard how much BTC fromAmount (1e8 base units) of
+// GetSwapQuote asks THORnode how much BTC fromAmount (1e8 base units) of
 // fromAsset yields. Mirrors ThorchainProvider.getSwapQuote. When btcAddress is
 // empty the quote is estimate-only: the destination is omitted and no memo is
 // built (the expected/min output are still returned for a price preview).
@@ -86,30 +97,39 @@ func (p *Provider) GetSwapQuote(ctx context.Context, fromAsset, fromAmount, btcA
 	if btcAddress != "" {
 		q.Set("destination", btcAddress)
 	}
-	endpoint := p.MidgardURL + "/v2/quote/swap?" + q.Encode()
+	endpoint := p.NodeURL + "/thorchain/quote/swap?" + q.Encode()
 
 	applog.Tracef("thorchain.GetSwapQuote — GET %s", endpoint)
 
 	body, err := p.get(ctx, endpoint)
 	if err != nil {
+		// A below-minimum amount comes back as an HTTP error whose body embeds the
+		// recommended minimum — surface it as a typed error the UI can act on.
+		if min, ok := parseBelowMin(err.Error()); ok {
+			return SwapQuote{}, &BelowMinError{MinIn: min}
+		}
 		return SwapQuote{}, err
 	}
 
-	var data midgardQuoteResponse
+	var data quoteResponse
 	if err := json.Unmarshal(body, &data); err != nil {
-		return SwapQuote{}, fmt.Errorf("decode Midgard quote: %w", err)
+		return SwapQuote{}, fmt.Errorf("decode THORnode quote: %w", err)
 	}
-	if data.Error != "" {
-		return SwapQuote{}, fmt.Errorf("Midgard quote error: %s", data.Error)
+	if msg := firstNonEmpty(data.Error, data.Message); msg != "" {
+		if min, ok := parseBelowMin(msg); ok {
+			return SwapQuote{}, &BelowMinError{MinIn: min}
+		}
+		return SwapQuote{}, fmt.Errorf("THORnode quote error: %s", msg)
 	}
 	if data.ExpectedAmountOut == "" {
-		return SwapQuote{}, fmt.Errorf("Midgard returned no expected_amount_out")
+		return SwapQuote{}, fmt.Errorf("THORnode returned no expected_amount_out")
 	}
 
 	expectedSats, ok := new(big.Int).SetString(data.ExpectedAmountOut, 10)
 	if !ok {
-		return SwapQuote{}, fmt.Errorf("Midgard expected_amount_out not an integer: %q", data.ExpectedAmountOut)
+		return SwapQuote{}, fmt.Errorf("THORnode expected_amount_out not an integer: %q", data.ExpectedAmountOut)
 	}
+	recMinIn, _ := strconv.ParseInt(data.RecommendedMinAmountIn, 10, 64)
 	expectedF, _ := new(big.Float).SetInt(expectedSats).Float64()
 	minSats := int64(math.Floor(expectedF * (1 - MemoSlippage)))
 
@@ -138,6 +158,7 @@ func (p *Provider) GetSwapQuote(ctx context.Context, fromAsset, fromAmount, btcA
 		EstimatedSeconds: estimatedSeconds,
 		GasLimit:         "300000",
 		Memo:             memo,
+		RecommendedMinIn: recMinIn,
 	}, nil
 }
 
@@ -217,6 +238,9 @@ func (p *Provider) get(ctx context.Context, endpoint string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
+	// Liquify rate-limits per IP (50k req/day). A stable client id identifies the
+	// app so the limit can be raised on request — it is NOT a per-user quota key.
+	req.Header.Set("X-Client-ID", "lazyswap")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -232,6 +256,33 @@ func (p *Provider) get(ctx context.Context, endpoint string) ([]byte, error) {
 		return nil, fmt.Errorf("THORchain request failed (%d): %s", resp.StatusCode, string(body))
 	}
 	return body, nil
+}
+
+// minSwapRe pulls the recommended minimum out of THORnode's "amount less than
+// min swap amount (recommended_min_amount_in: N)" error.
+var minSwapRe = regexp.MustCompile(`recommended_min_amount_in:\s*(\d+)`)
+
+// parseBelowMin extracts the recommended minimum (1e8 base units) from a
+// THORnode below-minimum error message, if one is present.
+func parseBelowMin(s string) (int64, bool) {
+	m := minSwapRe.FindStringSubmatch(s)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // formatSats renders a sats float as a fixed 8-decimal BTC string.

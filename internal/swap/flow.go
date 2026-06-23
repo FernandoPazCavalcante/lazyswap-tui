@@ -57,6 +57,12 @@ type FlowQuote struct {
 	BTCAddress           string // destination Bitcoin address (empty for estimate)
 	ThorMemo             string // encoded THORchain memo (empty for estimate)
 	EstimatedOutputSats  int64  // expected BTC output in sats (1e8 base units)
+
+	// THORChain enforces a per-token minimum input (covers the BTC network
+	// outbound fee). These describe it for the current token/price.
+	ThorBelowMin       bool   // true when the requested amount is under the minimum
+	ThorMinTokenAmount string // minimum input in from-token units, e.g. "4.016789"
+	ThorMinUSD         string // that minimum as approx USD, e.g. "$4.02"
 }
 
 // FlowResult is the outcome of Flow.Execute.
@@ -337,9 +343,14 @@ func (f *Flow) GetThorchainQuote(
 
 	quote, err := thorchain.NewProvider().GetSwapQuote(ctx, fromAsset, thorAmount, btcAddress)
 	if err != nil {
+		var bm *thorchain.BelowMinError
+		if errors.As(err, &bm) {
+			return FlowQuote{}, belowMinErr(fromToken.Symbol, bm.MinIn, conv.PricePerToken)
+		}
 		return FlowQuote{}, err
 	}
 
+	minTok, minUSD := thorMinFields(quote.RecommendedMinIn, conv.PricePerToken)
 	return FlowQuote{
 		FromToken:            fromToken,
 		ToToken:              btcToken,
@@ -360,6 +371,8 @@ func (f *Flow) GetThorchainQuote(
 		BTCAddress:           btcAddress,
 		ThorMemo:             quote.Memo,
 		EstimatedOutputSats:  quote.ExpectedSats,
+		ThorMinTokenAmount:   minTok,
+		ThorMinUSD:           minUSD,
 	}, nil
 }
 
@@ -396,9 +409,30 @@ func (f *Flow) EstimateThorchain(
 
 	quote, err := thorchain.NewProvider().GetSwapQuote(ctx, fromAsset, thorAmount, "")
 	if err != nil {
+		// Below the minimum is a displayable state, not a hard error: return a
+		// quote flagged ThorBelowMin so the panel can show the disclaimer + block.
+		var bm *thorchain.BelowMinError
+		if errors.As(err, &bm) {
+			minTok, minUSD := thorMin(bm.MinIn, conv.PricePerToken)
+			return FlowQuote{
+				FromToken:          fromToken,
+				ToToken:            btcToken,
+				USDAmount:          usdAmount,
+				USDAmountFormatted: FormatUSD(usd),
+				FromTokenAmount:    conv.TokenAmount,
+				FromTokenPriceLine: fmt.Sprintf("@ %s/%s", FormatUSD(conv.PricePerToken), fromToken.Symbol),
+				NeedsApproval:      fromToken.Address != NativeSentinel,
+				NetFromTokenAmount: netFromTokenAmount,
+				IsThorchain:        true,
+				ThorBelowMin:       true,
+				ThorMinTokenAmount: minTok,
+				ThorMinUSD:         minUSD,
+			}, nil
+		}
 		return FlowQuote{}, err
 	}
 
+	minTok, minUSD := thorMinFields(quote.RecommendedMinIn, conv.PricePerToken)
 	return FlowQuote{
 		FromToken:            fromToken,
 		ToToken:              btcToken,
@@ -416,6 +450,8 @@ func (f *Flow) EstimateThorchain(
 		ThorEstimatedSeconds: quote.EstimatedSeconds,
 		ThorFees:             quote.TotalFees,
 		EstimatedOutputSats:  quote.ExpectedSats,
+		ThorMinTokenAmount:   minTok,
+		ThorMinUSD:           minUSD,
 	}, nil
 }
 
@@ -464,6 +500,11 @@ func (f *Flow) ExecuteThorchain(
 	provider := thorchain.NewProvider()
 	quote, err := provider.GetSwapQuote(ctx, fromAsset, thorAmount, btcAddress)
 	if err != nil {
+		var bm *thorchain.BelowMinError
+		if errors.As(err, &bm) {
+			return failResult(fromToken, btcToken, usdAmount,
+				belowMinErr(fromToken.Symbol, bm.MinIn, conv.PricePerToken).Error())
+		}
 		return failResult(fromToken, btcToken, usdAmount, err.Error())
 	}
 	// Always fetch a fresh inbound vault — THORchain rotates them.
@@ -500,6 +541,28 @@ func (f *Flow) ExecuteThorchain(
 		OutputAmount: quote.ExpectedOutput,
 		GasUsed:      res.GasUsed,
 	}
+}
+
+// thorMin renders THORChain's recommended minimum (1e8 base units) as a
+// from-token amount and its approximate USD value at pricePerToken.
+func thorMin(minIn int64, pricePerToken float64) (tokenAmount, usd string) {
+	mt := float64(minIn) / 1e8
+	return strconv.FormatFloat(mt, 'f', 6, 64), FormatUSD(mt * pricePerToken)
+}
+
+// thorMinFields is thorMin but yields empty strings when the minimum is unknown
+// (0), so callers can show it only when present.
+func thorMinFields(minIn int64, pricePerToken float64) (tokenAmount, usd string) {
+	if minIn <= 0 {
+		return "", ""
+	}
+	return thorMin(minIn, pricePerToken)
+}
+
+// belowMinErr builds the user-facing "below minimum" error for symbol.
+func belowMinErr(symbol string, minIn int64, pricePerToken float64) error {
+	t, u := thorMin(minIn, pricePerToken)
+	return fmt.Errorf("amount below THORChain minimum: need ≥ %s %s (≈ %s) to cover the Bitcoin network fee", t, symbol, u)
 }
 
 // thorAssetString builds the THORchain asset identifier for fromToken.
