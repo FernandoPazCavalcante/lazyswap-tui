@@ -29,7 +29,7 @@ PancakeSwap), plus cross-chain BTC swaps via THORchain.
 
 Launch the TUI, or drive everything from the command line.
 
-<!-- TODO: drop a TUI screenshot or GIF here — e.g. ![lazyswap TUI](docs/demo.gif) -->
+![lazyswap demo](docs/demo.gif)
 
 ```bash
 lazyswap                          # launch the Vim-style TUI (first run creates a wallet)

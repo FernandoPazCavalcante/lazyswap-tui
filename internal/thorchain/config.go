@@ -1,17 +1,18 @@
 // Package thorchain implements cross-chain EVM → BTC swaps via THORchain.
 //
 // Mirrors src/blockchain/thorchain/{thorchain-config,thorchain-provider,
-// thorchain-executor}.ts. The provider talks to the public Midgard + THORnode
-// APIs for quotes and inbound vault addresses; the executor signs and
-// broadcasts the EVM transaction that initiates the swap.
+// thorchain-executor}.ts. The provider talks to the public THORnode API for
+// quotes and inbound vault addresses; the executor signs and broadcasts the
+// EVM transaction that initiates the swap.
 package thorchain
 
 // Public THORchain endpoints. Never hardcode these elsewhere — import from here.
 const (
-	// MidgardURL serves swap quotes and pool data.
-	MidgardURL = "https://midgard.ninerealms.com"
-	// NodeURL serves inbound vault addresses.
-	NodeURL = "https://thornode.ninerealms.com"
+	// NodeURL is the THORnode base URL — serves swap quotes
+	// (/thorchain/quote/swap) and inbound vault addresses (/thorchain/inbound_addresses).
+	// Liquify gateway: the old *.ninerealms.com endpoints were retired 2025-04-20.
+	// Quotes are a THORnode endpoint, NOT a Midgard one (Midgard is read-only analytics).
+	NodeURL = "https://gateway.liquify.com/chain/thorchain_api"
 
 	// BTCAsset is the canonical THORchain asset string for Bitcoin.
 	BTCAsset = "BTC.BTC"

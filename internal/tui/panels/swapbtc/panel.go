@@ -346,6 +346,11 @@ func (m Model) handleFormKey(k tea.KeyMsg) (Model, tea.Cmd) {
 
 	case fieldAddr:
 		if k.Type == tea.KeyEnter {
+			if m.estimate != nil && m.estimate.ThorBelowMin {
+				m.quoteErr = fmt.Sprintf("Amount below THORChain minimum: need ≥ %s %s (≈ %s).",
+					m.estimate.ThorMinTokenAmount, m.estimate.FromToken.Symbol, m.estimate.ThorMinUSD)
+				return m, nil
+			}
 			if !m.inputsValid() {
 				m.quoteErr = "Enter a positive USD amount and a valid BTC address."
 				return m, nil
@@ -498,17 +503,26 @@ func (m Model) formBody() string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
-// estimateLine renders the live BTC/sats price preview under the amount field.
-// Always returns one row so the form height stays stable.
+// estimateLine renders the live BTC/sats price preview under the amount field,
+// or the THORChain minimum disclaimer when the amount is too low. Always returns
+// one row so the form height stays stable.
 func (m Model) estimateLine() string {
 	switch {
 	case m.estimating:
 		return theme.Dim().Render("  estimating…")
+	case m.estimate != nil && m.estimate.ThorBelowMin:
+		return theme.Error().Render(fmt.Sprintf("  ⚠ Below THORChain minimum — need ≥ %s %s (≈ %s)",
+			m.estimate.ThorMinTokenAmount, m.estimate.FromToken.Symbol, m.estimate.ThorMinUSD))
 	case m.estimateErr != "":
 		return theme.Dim().Render("  (estimate unavailable)")
 	case m.estimate != nil:
-		return theme.Text().Render(fmt.Sprintf("  ≈ %s BTC  (%s sats)",
+		s := theme.Text().Render(fmt.Sprintf("  ≈ %s BTC  (%s sats)",
 			m.estimate.EstimatedOutput, formatSats(m.estimate.EstimatedOutputSats)))
+		if m.estimate.ThorMinTokenAmount != "" {
+			s += theme.Dim().Render(fmt.Sprintf("   · min %s %s",
+				m.estimate.ThorMinTokenAmount, m.estimate.FromToken.Symbol))
+		}
+		return s
 	default:
 		return ""
 	}

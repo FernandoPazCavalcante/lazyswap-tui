@@ -2,6 +2,7 @@ package thorchain
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -45,20 +46,23 @@ func TestToThorBaseUnits(t *testing.T) {
 
 func TestGetSwapQuoteParsesAndAppliesSlippage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v2/quote/swap" {
+		if r.URL.Path != "/thorchain/quote/swap" {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		// 1_000_000 sats == 0.01 BTC expected out, no memo provided.
-		_, _ = w.Write([]byte(`{"expected_amount_out":"1000000","fees":{"total":"20000"},"outbound_delay_seconds":540}`))
+		_, _ = w.Write([]byte(`{"expected_amount_out":"1000000","fees":{"total":"20000"},"outbound_delay_seconds":540,"recommended_min_amount_in":"123456"}`))
 	}))
 	defer srv.Close()
 
 	p := NewProvider()
-	p.MidgardURL = srv.URL
+	p.NodeURL = srv.URL
 	q, err := p.GetSwapQuote(context.Background(), "BSC.BNB", "50000000", "bc1qexampleaddressxxxxxxxxxxxxxx")
 	if err != nil {
 		t.Fatalf("GetSwapQuote: %v", err)
+	}
+	if q.RecommendedMinIn != 123456 {
+		t.Fatalf("RecommendedMinIn = %d, want 123456", q.RecommendedMinIn)
 	}
 	if q.ExpectedOutput != "0.01000000" {
 		t.Fatalf("ExpectedOutput = %q, want 0.01000000", q.ExpectedOutput)
@@ -79,16 +83,37 @@ func TestGetSwapQuoteParsesAndAppliesSlippage(t *testing.T) {
 	}
 }
 
-func TestGetSwapQuoteSurfacesMidgardError(t *testing.T) {
+func TestGetSwapQuoteSurfacesQuoteError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"error":"trading halted"}`))
+		// THORnode surfaces errors via "message" (e.g. dust threshold), not "error".
+		_, _ = w.Write([]byte(`{"message":"amount less than dust threshold"}`))
 	}))
 	defer srv.Close()
 
 	p := NewProvider()
-	p.MidgardURL = srv.URL
+	p.NodeURL = srv.URL
 	if _, err := p.GetSwapQuote(context.Background(), "BSC.BNB", "1", "bc1q"); err == nil {
-		t.Fatal("expected error from Midgard error field")
+		t.Fatal("expected error from THORnode message field")
+	}
+}
+
+func TestGetSwapQuoteBelowMin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// THORnode rejects a below-minimum amount with the min embedded in the body.
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":3,"message":"amount less than min swap amount (recommended_min_amount_in: 401682894): invalid request"}`))
+	}))
+	defer srv.Close()
+
+	p := NewProvider()
+	p.NodeURL = srv.URL
+	_, err := p.GetSwapQuote(context.Background(), "BSC.USDT-0x55d3", "47688700", "bc1qexampleaddressxxxxxxxxxxxxxx")
+	var bm *BelowMinError
+	if !errors.As(err, &bm) {
+		t.Fatalf("expected *BelowMinError, got %v", err)
+	}
+	if bm.MinIn != 401682894 {
+		t.Fatalf("MinIn = %d, want 401682894", bm.MinIn)
 	}
 }
 
